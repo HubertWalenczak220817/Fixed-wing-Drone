@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+
+    <script>
+        L_NO_TOUCH = false;
+        L_DISABLE_3D = false;
+    </script>
+
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            display: flex;
+        }
+
+        #map {
+            flex: 1;
+        }
+
+        #right-column {
+            width: 22%;
+            height: 100%;
+            box-sizing: border-box;
+            padding: 10px;
+            background-color: #f2f2f2;
+        }
+
+        .leaflet-container {
+            width: 80%;
+            height: 100vh;
+        }
+
+        table {
+            width: 100%;
+        }
+
+        th,
+        td {
+            padding: 10px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        td input {
+            width: 100%;
+            border: none;
+            box-sizing: border-box;
+        }
+
+        .remove-btn {
+            color: red;
+            cursor: pointer;
+        }
+
+        #controls {
+            height: 85px;
+        }
+
+        #tableContainer {
+            max-height: calc(100vh - 95px);
+            overflow-y: auto;
+        }
+
+        table {
+            width: 100%; /* Set a fixed width for the table */
+            table-layout: fixed;
+        }
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css" />
+    <script src="https://cdn.jsdelivr.net/gh/ardhi/Leaflet.MousePosition/src/L.Control.MousePosition.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ardhi/Leaflet.MousePosition/src/L.Control.MousePosition.min.css" />
+</head>
+
+<body>
+
+    <div id="map"></div>
+
+    <div id="right-column">
+        <div id="controls">
+            <label for="markerType">Marker Type:</label>
+            <select id="markerType">
+                <option value="Take-off">Take-off</option>
+                <option value="Checkpoint">Checkpoint</option>
+                <option value="Landing">Landing</option>
+            </select>
+            <br>
+            <label for="altitude">Altitude:</label>
+            <input type="number" id="altitude" value=100>
+            <br>
+            <button onclick="exportTableToCSV()">Export as CSV</button>
+        </div>
+
+        <div id="tableContainer">
+            <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Marker Type</th>
+                    <th>Altitude</th>
+                    <th>Lat</th>
+                    <th>Lon</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="markerTableBody"></tbody>
+        </table>
+        </div>
+
+    </div>
+
+    <script>
+        var map = L.map(
+            "map", {
+                center: [51.565, 4.7105],
+                zoom: 13,
+            }
+        );
+
+        var markerTypes = ['Take-off', 'Checkpoint', 'Landing'];
+        var checkpointCounter = 1;
+        var markers = [];
+        var table = document.querySelector('table');
+        var markerTableBody = document.getElementById('markerTableBody');
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        function createMarkerIcon(markerType) {
+            var markerColor;
+            var icon;
+            if (markerType === 'Take-off') {
+                markerColor = 'green';
+                icon = 'home';
+            } else if (markerType === 'Checkpoint') {
+                markerColor = 'blue';
+                icon = 'plane';
+            } else if (markerType === 'Landing') {
+                markerColor = 'red';
+                icon = 'home';
+            }
+
+            return L.AwesomeMarkers.icon({
+                "extraClasses": "fa-rotate-0",
+                "icon": icon,
+                "iconColor": "white",
+                "markerColor": markerColor,
+                "prefix": "glyphicon"
+            });
+        }
+
+        function newMarker(e, markerType, altitude, id) {
+            var new_mark = L.marker(e.latlng, {
+                draggable: false
+            }).addTo(map);
+            var lat = e.latlng.lat.toFixed(4),
+                lng = e.latlng.lng.toFixed(4);
+            new_mark.setIcon(createMarkerIcon(markerType));
+            new_mark.bindPopup(`<b>ID:</b> ${id}<br /><b>Marker Type:</b> ${markerType}<br /><b>Altitude:</b> ${altitude} m<br /><b>Lat:</b> ${lat}<br /><b>Lon:</b> ${lng}`);
+            markers.push({
+                id,
+                markerType,
+                altitude,
+                lat,
+                lng,
+                marker: new_mark
+            });
+            updateTable();
+            drawLines();
+        }
+
+        function drawLines() {
+            map.eachLayer(function (layer) {
+                if (layer instanceof L.Polyline) {
+                    layer.remove();
+                }
+            });
+
+            var markerMarkers = markers.map(marker => marker.marker);
+            var lines = [];
+
+            for (var i = 0; i < markerMarkers.length - 1; i++) {
+                var line = [markerMarkers[i].getLatLng(), markerMarkers[i + 1].getLatLng()];
+                lines.push(line);
+            }
+
+            var polyline = L.polyline(lines, {
+                color: 'red'
+            }).addTo(map);
+        }
+
+        function updateTable() {
+            var tableBody = markerTableBody;
+            while (tableBody.firstChild) {
+                tableBody.removeChild(tableBody.firstChild);
+            }
+
+            markers.forEach(marker => {
+                var row = tableBody.insertRow();
+                row.insertCell(0).innerText = marker.id;
+                row.insertCell(1).innerText = marker.markerType;
+                row.insertCell(2).innerText = marker.altitude;
+                row.insertCell(3).innerText = marker.lat;
+                row.insertCell(4).innerText = marker.lng;
+
+                var removeCell = row.insertCell(5);
+                var removeBtn = document.createElement('span');
+                removeBtn.innerHTML = '<i class="fas fa-trash-alt remove-btn"></i>';
+                removeBtn.addEventListener('click', function () {
+                    removeMarker(marker.id);
+                });
+                removeCell.appendChild(removeBtn);
+
+                for (var i = 0; i < 5; i++) {
+                    var cell = row.cells[i];
+                    cell.contentEditable = true;
+                    cell.addEventListener('input', function (event) {
+                        updateMarkerFromTable(marker.id, event.target.cellIndex, event.target.innerText);
+                    });
+                }
+            });
+        }
+
+        function updateMarkerFromTable(id, columnIndex, newValue) {
+            var marker = markers.find(m => m.id === id);
+
+            switch (columnIndex) {
+                case 1:
+                    marker.markerType = newValue;
+                    marker.marker.setIcon(createMarkerIcon(newValue));
+                    break;
+                case 2:
+                    marker.altitude = newValue;
+                    break;
+                case 3:
+                    marker.lat = newValue;
+                    marker.marker.setLatLng([newValue, marker.lng]);
+                    break;
+                case 4:
+                    marker.lng = newValue;
+                    marker.marker.setLatLng([marker.lat, newValue]);
+                    break;
+            }
+
+            var lat = marker.marker.getLatLng().lat.toFixed(4);
+            var lng = marker.marker.getLatLng().lng.toFixed(4);
+            marker.marker.setPopupContent(`<b>ID:</b> ${id}<br /><b>Marker Type:</b> ${marker.markerType}<br /><b>Altitude:</b> ${marker.altitude} m<br /><b>Lat:</b> ${lat}<br /><b>Lon:</b> ${lng}`);
+
+            drawLines();
+        }
+
+        function removeMarker(id) {
+            var index = markers.findIndex(marker => marker.id === id);
+            if (index !== -1) {
+                markers[index].marker.remove();
+                markers.splice(index, 1);
+                rearrangeIds();
+                updateTable();
+                drawLines();
+            }
+        }
+
+        function rearrangeIds() {
+            markers.forEach((marker, index) => {
+                marker.id = index + 1;
+                checkpointCounter = index + 2
+            });
+        }
+
+        map.on('click', function (e) {
+            var markerType = document.getElementById('markerType').value;
+            var altitude = document.getElementById('altitude').value;
+
+            if (markerType && markerTypes.includes(markerType) && altitude !== "") {
+                newMarker(e, markerType, altitude, checkpointCounter);
+                checkpointCounter++;
+            } else {
+                alert("Invalid marker type or altitude. Please make sure to select a marker type and provide altitude.");
+            }
+        });
+
+        function exportTableToCSV() {
+	        var csvContent = "data:text/csv;charset=utf-8,ID,Marker Type,Altitude,Lat,Lon\n";
+
+	        markers.forEach(marker => {
+	            csvContent += `${marker.id},${marker.markerType},${marker.altitude},${marker.lat},${marker.lng}\n`;
+	        });
+
+	        var encodedUri = encodeURI(csvContent);
+	        var link = document.createElement("a");
+	        link.setAttribute("href", encodedUri);
+	        link.setAttribute("download", "markers.csv");
+	        document.body.appendChild(link);
+	        link.click();
+	    }
+    </script>
+</body>
+
+</html>

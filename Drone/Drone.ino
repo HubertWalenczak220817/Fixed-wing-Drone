@@ -49,6 +49,9 @@ Adafruit_LPS22 g_lps22hb;
 // Function declarations
 void OnTxDone(void);
 void OnTxTimeout(void);
+void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr);
+void OnRxTimeout(void);
+void OnRxError(void);
 
 #ifdef NRF52_SERIES
 #define LED_BUILTIN 35
@@ -56,7 +59,7 @@ void OnTxTimeout(void);
 
 // Define LoRa parameters
 #define RF_FREQUENCY 868300000	// Hz
-#define TX_OUTPUT_POWER 14		// dBm
+#define TX_OUTPUT_POWER 22		// dBm
 #define LORA_BANDWIDTH 1		// [0: 125 kHz, 1: 250 kHz, 2: 500 kHz, 3: Reserved]
 #define LORA_SPREADING_FACTOR 7 // [SF7..SF12]
 #define LORA_CODINGRATE 1		// [1: 4/5, 2: 4/6,  3: 4/7,  4: 4/8]
@@ -66,10 +69,106 @@ void OnTxTimeout(void);
 #define LORA_IQ_INVERSION_ON false
 #define RX_TIMEOUT_VALUE 3000
 #define TX_TIMEOUT_VALUE 3000
+#define L 0.0065
 
 static RadioEvents_t RadioEvents;
-static uint8_t TxdBuffer[64];
+static uint8_t RcvBuffer[64];
+
 const double rho = 1.225;  // density of air in kg/m^3 (approximately at sea level)
+
+float GROUNDPRESSURE;
+float GROUNDTEMP;
+
+float calculateAltitude(float pressure, float groundpressure) {
+    // Calculate the altitude using the barometric formula
+    return (1 - pow((pressure / groundpressure), 0.190284)) * 44330.8;
+}
+
+double calculateSpeed(double pressureOnComing, double pressureAmbient) {
+  double V;
+  return V = sqrt((2 / rho) * (pressureOnComing - pressureAmbient));
+}
+
+void calibrateAltitudeReading() {
+  sensors_event_t temp;
+  sensors_event_t pressure;
+  g_lps22hb.getEvent(&pressure, &temp);
+  
+  GROUNDPRESSURE = pressure.pressure;
+  GROUNDTEMP = temp.temperature;
+}
+
+void direction_parse(String tmp)
+{
+    if (tmp.indexOf(",E,") != -1)
+    {
+        direction_E_W = 0;
+    }
+    else
+    {
+        direction_E_W = 1;
+    }
+    
+    if (tmp.indexOf(",S,") != -1)
+    {
+        direction_S_N = 0;
+    }
+    else
+    {
+        direction_S_N = 1;
+    }
+}
+
+/**@brief Function to be executed on Radio Tx Done event
+ */
+void OnTxDone(void)
+{
+	Serial.println("OnTxDone");
+}
+
+/**@brief Function to be executed on Radio Tx Timeout event
+ */
+void OnTxTimeout(void)
+{
+	Serial.println("OnTxTimeout");
+}
+
+void send(uint8_t* message, int length)
+{
+  Radio.Send(message, length);
+}
+
+void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr)
+{
+	Serial.println("OnRxDone");
+	delay(10);
+	memcpy(RcvBuffer, payload, size);
+
+	Serial.printf("RssiValue=%d dBm, SnrValue=%d\n", rssi, snr);
+
+	for (int idx = 0; idx < size; idx++)
+	{
+		Serial.printf("%02X ", RcvBuffer[idx]);
+	}
+	Serial.println("");
+	Radio.Rx(RX_TIMEOUT_VALUE);
+}
+
+/**@brief Function to be executed on Radio Rx Timeout event
+ */
+void OnRxTimeout(void)
+{
+	Serial.println("OnRxTimeout");
+	Radio.Rx(RX_TIMEOUT_VALUE);
+}
+
+/**@brief Function to be executed on Radio Rx Error event
+ */
+void OnRxError(void)
+{
+	Serial.println("OnRxError");
+	Radio.Rx(RX_TIMEOUT_VALUE);
+}
 
 void setup()
 {
@@ -131,10 +230,10 @@ void setup()
 	lora_rak4630_init();
 	// Initialize the Radio callbacks
 	RadioEvents.TxDone = OnTxDone;
-	RadioEvents.RxDone = NULL;
+	RadioEvents.RxDone = OnRxDone;
 	RadioEvents.TxTimeout = OnTxTimeout;
-	RadioEvents.RxTimeout = NULL;
-	RadioEvents.RxError = NULL;
+	RadioEvents.RxTimeout = OnRxTimeout;
+	RadioEvents.RxError = OnRxError;
 	RadioEvents.CadDone = NULL;
 
 	// Initialize the Radio
@@ -148,7 +247,16 @@ void setup()
 					  LORA_SPREADING_FACTOR, LORA_CODINGRATE,
 					  LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
 					  true, 0, 0, LORA_IQ_INVERSION_ON, TX_TIMEOUT_VALUE);
-	send();
+
+  Radio.SetRxConfig(MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
+					  LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
+					  LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
+					  0, true, 0, 0, LORA_IQ_INVERSION_ON, true);
+	send((uint8_t*)"Hello", 5);
+
+  // Start LoRa
+	Serial.println("Starting Radio.Rx");
+	Radio.Rx(RX_TIMEOUT_VALUE);
 
   // Initialize pressure sensor
 
@@ -183,65 +291,9 @@ void setup()
       break;
 
   }
-}
 
-float calculateAltitude(float pressure, float groundpressure) {
-    // Calculate the altitude using the barometric formula
-    float altitude = (1 - pow((pressure / groundpressure), 0.190284)) * 44330.8;
+  calibrateAltitudeReading();
 
-    return altitude;
-}
-
-double calculateSpeed(double pressureOnComing, double pressureAmbient) {
-  double V;
-  return V = sqrt((2 / rho) * (pressureOnComing - pressureAmbient));
-}
-
-void direction_parse(String tmp)
-{
-    if (tmp.indexOf(",E,") != -1)
-    {
-        direction_E_W = 0;
-    }
-    else
-    {
-        direction_E_W = 1;
-    }
-    
-    if (tmp.indexOf(",S,") != -1)
-    {
-        direction_S_N = 0;
-    }
-    else
-    {
-        direction_S_N = 1;
-    }
-}
-
-/**@brief Function to be executed on Radio Tx Done event
- */
-void OnTxDone(void)
-{
-	Serial.println("OnTxDone");
-	delay(5000);
-	send();
-}
-
-/**@brief Function to be executed on Radio Tx Timeout event
- */
-void OnTxTimeout(void)
-{
-	Serial.println("OnTxTimeout");
-}
-
-void send()
-{
-	TxdBuffer[0] = 'H';
-	TxdBuffer[1] = 'e';
-	TxdBuffer[2] = 'l';
-	TxdBuffer[3] = 'l';
-	TxdBuffer[4] = 'o';
-	Radio.Send(TxdBuffer, 5);
 }
 
 void loop()
